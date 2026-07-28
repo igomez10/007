@@ -1,4 +1,4 @@
-.PHONY: install install-dev dev run mongo mongo-stop init test test-e2e
+.PHONY: install install-dev dev run mongo mongo-stop init test test-e2e summarize
 
 VENV := .venv
 PY := $(VENV)/bin/python
@@ -34,3 +34,10 @@ mongo-stop:
 
 init:
 	MONGO_NAME=$(MONGO_NAME) ./init.sh
+
+# The server already titles conversations via an in-process background thread
+# (SUMMARY_INTERVAL_SECONDS, default 60s). This target runs one pass manually,
+# e.g. for a one-off backfill or from cron if you disable the worker with
+# SUMMARY_WORKER=0.
+summarize:
+	$(VENV)/bin/python summarize.py

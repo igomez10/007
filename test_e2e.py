@@ -25,7 +25,12 @@ class _FakeLMStudioHandler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         self.rfile.read(length)
         body = json.dumps(
-            {"choices": [{"message": {"role": "assistant", "content": "pong"}}]}
+            {
+                "model": "fake-model-v1",
+                "choices": [
+                    {"message": {"role": "assistant", "content": "pong"}}
+                ],
+            }
         ).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -54,10 +59,12 @@ def mongo():
 
 @pytest.fixture
 def client(mongo, fake_lmstudio, monkeypatch):
+    monkeypatch.setenv("SUMMARY_WORKER", "0")  # don't run the bg titler in tests
     monkeypatch.setattr(main, "MONGO_URI", mongo.get_connection_url())
     monkeypatch.setattr(main, "LMSTUDIO_URL", fake_lmstudio)
     monkeypatch.setattr(main, "_client", None)  # force reconnect to the container
     main.get_messages_collection().delete_many({})  # clean slate per test
+    main.get_conversations_collection().delete_many({})
     with TestClient(app) as c:
         yield c
 
@@ -77,6 +84,10 @@ def test_chat_persists_two_documents_and_lists_them(client):
     assert [d["role"] for d in docs] == ["user", "assistant"]
     assert [d["content"] for d in docs] == ["ping", "pong"]
 
+    # assistant message is tagged with the model that generated it; user isn't
+    assert "model" not in docs[0]
+    assert docs[1]["model"] == "fake-model-v1"
+
     # and the list endpoint returns them in order
     msgs = client.get(f"/conversations/{cid}/messages").json()["messages"]
     assert [(m["role"], m["content"]) for m in msgs] == [
@@ -91,3 +102,38 @@ def test_reusing_conversation_id_appends_messages(client):
 
     msgs = client.get(f"/conversations/{cid}/messages").json()["messages"]
     assert [m["content"] for m in msgs] == ["one", "pong", "two", "pong"]
+
+
+def test_list_conversations_aggregates_and_orders_by_recency(client):
+    first = client.post("/chat", json={"message": "hello there"}).json()[
+        "conversation_id"
+    ]
+    second = client.post("/chat", json={"message": "second chat"}).json()[
+        "conversation_id"
+    ]
+
+    convos = client.get("/conversations").json()["conversations"]
+    assert [c["conversation_id"] for c in convos] == [second, first]
+
+    by_id = {c["conversation_id"]: c for c in convos}
+    assert by_id[first]["message_count"] == 2  # user + assistant
+    assert by_id[first]["preview"] == "hello there"  # first message as preview
+
+
+def test_summarized_title_is_stored_and_listed(client):
+    cid = client.post("/chat", json={"message": "plan a trip"}).json()[
+        "conversation_id"
+    ]
+
+    # run the summarization job with a stub titler (min_messages=1 forces it)
+    done = main.summarize_conversations(
+        main.get_messages_collection(),
+        main.get_conversations_collection(),
+        titler=lambda history: "Trip planning",
+        min_messages=1,
+    )
+    assert (cid, "Trip planning") in done
+
+    convos = client.get("/conversations").json()["conversations"]
+    item = next(c for c in convos if c["conversation_id"] == cid)
+    assert item["title"] == "Trip planning"
