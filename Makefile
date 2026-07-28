@@ -1,4 +1,4 @@
-.PHONY: install dev run mongo mongo-stop init
+.PHONY: install install-dev dev run mongo mongo-stop init test test-e2e
 
 VENV := .venv
 PY := $(VENV)/bin/python
@@ -9,6 +9,16 @@ MONGO_NAME ?= mongo-dev
 install:
 	python3 -m venv $(VENV)
 	$(VENV)/bin/pip install -r requirements.txt
+
+install-dev:
+	python3 -m venv $(VENV)
+	$(VENV)/bin/pip install -r requirements-dev.txt
+
+test:
+	$(VENV)/bin/pytest -q
+
+test-e2e:
+	$(VENV)/bin/pytest -q -m e2e
 
 dev:
 	$(VENV)/bin/uvicorn main:app --reload --port $(PORT)

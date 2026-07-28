@@ -9,5 +9,6 @@ if (!collections.includes("messages")) {
   print("collection already exists: messages");
 }
 
-db.messages.createIndex({ created_at: 1 });
-print("ensured index on messages.created_at");
+// Support aggregating/listing a conversation's messages in chronological order.
+db.messages.createIndex({ conversation_id: 1, created_at: 1 });
+print("ensured index on messages.{conversation_id, created_at}");
